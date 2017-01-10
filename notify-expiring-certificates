@@ -1,0 +1,174 @@
+#!/usr/bin/env perl
+# notifiy-expiring-certs.pl --- A simple e-mail notifier for expiring certificates.
+# Copyright (C) 2016  Eric MSP Veith <eveith@veith-m.de>
+#
+# Licensed under the Apache License, Version 2.0 (the "License");
+# you may not use this file except in compliance with the License.
+# You may obtain a copy of the License at
+#
+#     http://www.apache.org/licenses/LICENSE-2.0
+#
+# Unless required by applicable law or agreed to in writing, software
+# distributed under the License is distributed on an "AS IS" BASIS,
+# WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+# See the License for the specific language governing permissions and
+# limitations under the License.
+
+
+use strict;
+use warnings;
+
+use DateTime;
+use IPC::Open3;
+use Email::Send;
+use Getopt::Std;
+use Time::ParseDate;
+use Symbol 'gensym';
+use DateTime::Format::Mail;
+use Sys::Proctitle qw(setproctitle);
+use Net::Domain qw(hostname hostfqdn hostdomain domainname);
+
+
+### DEFAULT VALUES:
+
+# How many days should we warn in advance?
+our $DEFAULT_DAYS_TO_WARN = 60;
+
+# What mailserver do we use?
+our $DEFAULT_SMTP_SERVER = 'localhost';
+
+# Default "MAIL FROM:" address
+our $DEFAULT_FROM_ADDRESS = 'certmaster@' . domainname;
+
+# Default recepient if no e-mail address is found:
+our $DEFAULT_TO_ADDRESS = 'certmaster@' . domainname;
+
+### DEFAULT_VALUES --- END.
+
+
+# Make sure that we don't leak a password or anything similar via Proctitle:
+setproctitle('notify-expering-certificates');
+
+
+sub HELP_MESSAGE {
+    print "notifiy-expiring-certs - " .
+        "A simple e-mail notifier for expiring certificates.\n";
+    print "\nOptions:\n\n";
+    print "-mSERVER     Mail server (DEFAULT: $DEFAULT_SMTP_SERVER)\n";
+    print "-fFROM       Mail from address (DEFAULT: $DEFAULT_FROM_ADDRESS)\n";
+    print "-tTO         Fall-back recepient (DEFAULT: $DEFAULT_TO_ADDRESS)\n";
+    print "-PPASSWORD   Password to access PKI certificate store\n";
+    print "-dDAYS       Warning period, in days " .
+        "(DEFAULT: $DEFAULT_DAYS_TO_WARN)\n";
+    print "-h           This help message\n";
+}
+
+
+# Parse command-line options:
+
+my %opts;
+getopts('f:t:m:P:d:h', \%opts);
+
+$opts{'m'} ||= $DEFAULT_SMTP_SERVER;
+$opts{'t'} ||= $DEFAULT_TO_ADDRESS;
+$opts{'f'} ||= $DEFAULT_FROM_ADDRESS;
+$opts{'d'} ||= $DEFAULT_DAYS_TO_WARN;
+
+HELP_MESSAGE and exit(0) if $opts{'h'};
+
+
+# Store DN => data.
+my %certs;
+
+
+my($pid, $wtr, $rdr, $err);
+$err = gensym;
+$pid = open3(
+    $wtr,
+    $rdr,
+    $err,
+    "pki",
+    "-c", $opts{'P'},
+    "ca-cert-find",
+    "--size", 2**23);
+
+my $record = undef;
+while (<$rdr>) {
+    chomp;
+
+    if (/Serial Number: (0x[a-f0-9]+)/) {
+        if ($record) {
+            unless ($certs{$record->{'Subject'}}) {
+                $certs{$record->{'Subject'}} = $record 
+            }
+
+            if ($certs{$record->{'Subject'}} 
+                    && $certs{$record->{'Subject'}}->{'Serial Number'}
+                        < $record->{'Serial Number'}) {
+                $certs{$record->{'Subject'}} = $record;
+            }
+        }
+
+        $record = {};
+        $record->{'Serial Number'} = hex($1);
+        next;
+    }
+
+    if (/Subject DN: (.*)/) {
+        $record->{'Subject'} = $1;
+        next;
+    }
+
+    if (/Not Valid After: (.*)/) {
+        $record->{'Not Valid After'} = $1;
+        next;
+    }
+
+    if (/Status: (.*)/) {
+        $record->{'Status'} = $1;
+        next;
+    }
+}
+
+waitpid($pid, 0);
+my $rc = $? >> 8;
+
+if (0 != $rc) {
+    die "The `pki' program exited with return code $rc.\n";
+}
+
+my $now = DateTime->now();
+my $warn_max = DateTime->now->add(days => $opts{'d'});
+
+foreach my $dn (keys %certs) {
+    my $end_epoch = parsedate($certs{$dn}->{'Not Valid After'});
+    my $end_date = DateTime->from_epoch(epoch => $end_epoch);
+
+    next if ($certs{$dn}->{'Status'} eq 'EXPIRED');
+    next unless ($warn_max->epoch() > $end_date->epoch());
+
+    my $days_to_end = ($end_date->epoch - $now->epoch) / (60*60*24);
+    my $record = $certs{$dn};
+    my ($cn) = $dn =~ /CN=([^,]+)/;
+    my ($email) = $dn =~ /E=([^,]+)/;
+
+    my $subject = sprintf(
+        "Your certificate for %s will expire in %d days",
+        $cn,
+        $days_to_end);
+    my $text = "The following certificate will expire in ".
+        $days_to_end. " days:\n\n".
+        "    Subject DN: ". $dn. "\n".
+        "    Serial Number: ". $record->{'Serial Number'}. "\n".
+        "    Not Valid Valid After: ". $record->{'Not Valid After'};
+    my $message = "To: " . ($email || 'eveith@veith-m.de') . "\n".
+        "From: root@" . hostname . "\n".
+        "Date: ". DateTime::Format::Mail->format_datetime($now). "\n".
+        "Subject: ". $subject. "\n\n".
+        $text;
+
+    my $sender = Email::Send->new({mailer => 'SMTP'});
+    $sender->mailer_args([Host => $opts{'m'}]);
+    $sender->send($message);
+}
+
