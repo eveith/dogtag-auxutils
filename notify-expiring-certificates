@@ -161,7 +161,7 @@ foreach my $dn (keys %certs) {
         "    Subject DN: ". $dn. "\n".
         "    Serial Number: ". $record->{'Serial Number'}. "\n".
         "    Not Valid Valid After: ". $record->{'Not Valid After'};
-    my $message = "To: " . ($email || $opts{'f'}) . "\n".
+    my $message = "To: " . ($email || $opts{'t'}) . "\n".
         "From: " . $opts{'f'} . "\n".
         "Date: ". DateTime::Format::Mail->format_datetime($now). "\n".
         "Subject: ". $subject. "\n\n".
