@@ -25,8 +25,8 @@ Copy the script to any location where it can be executed. Then, invoke
     Options:
 
     -mSERVER     Mail server (DEFAULT: localhost)
-    -fFROM       Mail from address (DEFAULT: certmaster@basileia.veith-m.de)
-    -tTO         Fall-back recepient (DEFAULT: certmaster@basileia.veith-m.de)
+    -fFROM       Mail from address (DEFAULT: certmaster@YOURDOMAIN)
+    -tTO         Fall-back recepient (DEFAULT: certmaster@YOURDOMAIN)
     -PPASSWORD   Password to access PKI certificate store
     -dDAYS       Warning period, in days (DEFAULT: 60)
     -h           This help message
