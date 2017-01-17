@@ -25,6 +25,7 @@ Copy the script to any location where it can be executed. Then, invoke
 
     Options:
 
+    -uURI        PKI server URI (DEFAULT: https://localhost:8443)
     -mSERVER     Mail server (DEFAULT: localhost)
     -fFROM       Mail from address (DEFAULT: certmaster@YOURDOMAIN)
     -tTO         Fall-back recepient (DEFAULT: certmaster@YOURDOMAIN)
