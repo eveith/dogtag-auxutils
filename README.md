@@ -10,10 +10,11 @@ certificates are about to expire per e-mail.
 
 A number of CPAN modules are needed for this script. Those are:
 
-  - Email::Send
-  - Sys::Proctitle
-  - Time::ParseDate
-  - DateTime::Format::Mail
+  - `DateTime`
+  - `XML::Twig`
+  - `HTTP::Tiny`
+  - `Email::Send`
+  - `DateTime::Format::Mail`
 
 ## Usage
 
@@ -27,7 +28,6 @@ Copy the script to any location where it can be executed. Then, invoke
     -mSERVER     Mail server (DEFAULT: localhost)
     -fFROM       Mail from address (DEFAULT: certmaster@YOURDOMAIN)
     -tTO         Fall-back recepient (DEFAULT: certmaster@YOURDOMAIN)
-    -PPASSWORD   Password to access PKI certificate store
     -dDAYS       Warning period, in days (DEFAULT: 60)
     -h           This help message
 

@@ -19,13 +19,11 @@ use strict;
 use warnings;
 
 use DateTime;
-use IPC::Open3;
+use XML::Twig;
+use HTTP::Tiny;
 use Email::Send;
 use Getopt::Std;
-use Time::ParseDate;
-use Symbol 'gensym';
 use DateTime::Format::Mail;
-use Sys::Proctitle qw(setproctitle);
 use Net::Domain qw(hostname hostfqdn hostdomain domainname);
 
 
@@ -33,6 +31,9 @@ use Net::Domain qw(hostname hostfqdn hostdomain domainname);
 
 # How many days should we warn in advance?
 our $DEFAULT_DAYS_TO_WARN = 60;
+
+# Where is the PKI server located?
+our $DEFAULT_PKI_SERVER = 'https://localhost:8443';
 
 # What mailserver do we use?
 our $DEFAULT_SMTP_SERVER = 'localhost';
@@ -46,29 +47,56 @@ our $DEFAULT_TO_ADDRESS = 'certmaster@' . domainname;
 ### DEFAULT_VALUES --- END.
 
 
-# Make sure that we don't leak a password or anything similar via Proctitle:
-setproctitle('notify-expering-certificates');
-
-
+##
+# Prints default help message
 sub HELP_MESSAGE {
     print "notifiy-expiring-certs - " .
         "A simple e-mail notifier for expiring certificates.\n";
     print "\nOptions:\n\n";
+    print "-uHOST       PKI server URI (DEFAULT: $DEFAULT_PKI_SERVER)\n";
     print "-mSERVER     Mail server (DEFAULT: $DEFAULT_SMTP_SERVER)\n";
     print "-fFROM       Mail from address (DEFAULT: $DEFAULT_FROM_ADDRESS)\n";
     print "-tTO         Fall-back recepient (DEFAULT: $DEFAULT_TO_ADDRESS)\n";
-    print "-PPASSWORD   Password to access PKI certificate store\n";
     print "-dDAYS       Warning period, in days " .
         "(DEFAULT: $DEFAULT_DAYS_TO_WARN)\n";
     print "-h           This help message\n";
 }
 
 
+##
+# Parses a XML definition of a certificate and possibly inserts it into the
+# known_certs hash.
+sub parse_cert_xml {
+    my ($known_certs, $xml) = @_;
+    my $id = $xml->att('id');
+
+    $xml->name eq 'CertDataInfo' && $id or die "Cannot parse XML twig: $xml\n";
+
+    my $dn = $xml->first_child('SubjectDN')->text;
+    my $cert_data = {
+        id => $id,
+        dn => $dn,
+        status => $xml->first_child('Status')->text,
+        validity_end => $xml->first_child('NotValidAfter')->text / 1000
+    };
+
+    return unless $cert_data->{status} eq 'VALID';
+
+    if ($known_certs->{$dn} 
+                && $known_certs->{$dn}{validity_end}
+                    < $cert_data->{validity_end}
+            || ! $known_certs->{$dn}) {
+        $known_certs->{$dn} = $cert_data;
+    }
+}
+
+
 # Parse command-line options:
 
 my %opts;
-getopts('f:t:m:P:d:h', \%opts);
+getopts('f:t:m:d:hu:', \%opts);
 
+$opts{'u'} ||= $DEFAULT_PKI_SERVER;
 $opts{'m'} ||= $DEFAULT_SMTP_SERVER;
 $opts{'t'} ||= $DEFAULT_TO_ADDRESS;
 $opts{'f'} ||= $DEFAULT_FROM_ADDRESS;
@@ -81,70 +109,36 @@ HELP_MESSAGE and exit(0) if $opts{'h'};
 my %certs;
 
 
-my($pid, $wtr, $rdr, $err);
-$err = gensym;
-$pid = open3(
-    $wtr,
-    $rdr,
-    $err,
-    "pki",
-    "-c", $opts{'P'},
-    "ca-cert-find",
-    "--size", 2**23);
+for (my $start = 0; $start >= 0; ) {
+    my $pki_rest_response = HTTP::Tiny->new->get(
+        $opts{'u'} . "/ca/rest/certs?start=$start&size=50&maxResults=-1");
 
-my $record = undef;
-while (<$rdr>) {
-    chomp;
-
-    if (/Serial Number: (0x[a-f0-9]+)/) {
-        if ($record) {
-            unless ($certs{$record->{'Subject'}}) {
-                $certs{$record->{'Subject'}} = $record 
-            }
-
-            if ($certs{$record->{'Subject'}} 
-                    && $certs{$record->{'Subject'}}->{'Serial Number'}
-                        < $record->{'Serial Number'}) {
-                $certs{$record->{'Subject'}} = $record;
-            }
-        }
-
-        $record = {};
-        $record->{'Serial Number'} = hex($1);
-        next;
+    if (!$pki_rest_response->{success}) {
+        print STDERR "Could not contact PKI server at $opts{u} \n";
+        print STDERR "Reason given: $pki_rest_response->{status} ".
+            "$pki_rest_response->{reason}\n";
+        exit(1)
     }
 
-    if (/Subject DN: (.*)/) {
-        $record->{'Subject'} = $1;
-        next;
-    }
+    XML::Twig->new(twig_handlers => {
+            'CertDataInfos' => sub {
+                if (scalar($_->children) > 2) {
+                    $start += 50;
+                } else {
+                    $start = -1;
+                }
+            },
+            'CertDataInfo' => sub { parse_cert_xml(\%certs, $_) }
+        })->parse($pki_rest_response->{content});
+} 
 
-    if (/Not Valid After: (.*)/) {
-        $record->{'Not Valid After'} = $1;
-        next;
-    }
-
-    if (/Status: (.*)/) {
-        $record->{'Status'} = $1;
-        next;
-    }
-}
-
-waitpid($pid, 0);
-my $rc = $? >> 8;
-
-if (0 != $rc) {
-    die "The `pki' program exited with return code $rc.\n";
-}
 
 my $now = DateTime->now();
 my $warn_max = DateTime->now->add(days => $opts{'d'});
 
 foreach my $dn (keys %certs) {
-    my $end_epoch = parsedate($certs{$dn}->{'Not Valid After'});
-    my $end_date = DateTime->from_epoch(epoch => $end_epoch);
+    my $end_date = DateTime->from_epoch(epoch => $certs{$dn}{validity_end});
 
-    next if ($certs{$dn}->{'Status'} eq 'EXPIRED');
     next unless ($warn_max->epoch() > $end_date->epoch());
 
     my $days_to_end = ($end_date->epoch - $now->epoch) / (60*60*24);
@@ -159,8 +153,8 @@ foreach my $dn (keys %certs) {
     my $text = "The following certificate will expire in ".
         $days_to_end. " days:\n\n".
         "    Subject DN: ". $dn. "\n".
-        "    Serial Number: ". $record->{'Serial Number'}. "\n".
-        "    Not Valid Valid After: ". $record->{'Not Valid After'};
+        "    Serial Number: ". $record->{id}. "\n".
+        "    Not Valid Valid After: $end_date";
     my $message = "To: " . ($email || $opts{'t'}) . "\n".
         "From: " . $opts{'f'} . "\n".
         "Date: ". DateTime::Format::Mail->format_datetime($now). "\n".
