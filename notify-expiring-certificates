@@ -1,5 +1,5 @@
 #!/usr/bin/env perl
-# notifiy-expiring-certs.pl --- A simple e-mail notifier for expiring certificates.
+# notifiy-expiring-certs --- A simple e-mail notifier for expiring certificates.
 # Copyright (C) 2016  Eric MSP Veith <eveith@veith-m.de>
 #
 # Licensed under the Apache License, Version 2.0 (the "License");
@@ -53,7 +53,7 @@ sub HELP_MESSAGE {
     print "notifiy-expiring-certs - " .
         "A simple e-mail notifier for expiring certificates.\n";
     print "\nOptions:\n\n";
-    print "-uHOST       PKI server URI (DEFAULT: $DEFAULT_PKI_SERVER)\n";
+    print "-uURI        PKI server URI (DEFAULT: $DEFAULT_PKI_SERVER)\n";
     print "-mSERVER     Mail server (DEFAULT: $DEFAULT_SMTP_SERVER)\n";
     print "-fFROM       Mail from address (DEFAULT: $DEFAULT_FROM_ADDRESS)\n";
     print "-tTO         Fall-back recepient (DEFAULT: $DEFAULT_TO_ADDRESS)\n";
