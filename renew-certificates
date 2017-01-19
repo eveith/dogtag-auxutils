@@ -1,0 +1,71 @@
+#!/usr/bin/env perl
+# renew-certificates --- A simple Dogtag PKI certificate autorenewer
+# Copyright (C) 2016  Eric MSP Veith <eveith@veith-m.de>
+#
+# Licensed under the Apache License, Version 2.0 (the "License");
+# you may not use this file except in compliance with the License.
+# You may obtain a copy of the License at
+#
+#     http://www.apache.org/licenses/LICENSE-2.0
+#
+# Unless required by applicable law or agreed to in writing, software
+# distributed under the License is distributed on an "AS IS" BASIS,
+# WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+# See the License for the specific language governing permissions and
+# limitations under the License.
+use strict;
+use warnings;
+
+use DateTime;
+use XML::Twig;
+use HTTP::Tiny;
+use Getopt::Std;
+
+
+# The default PKI server URI:
+our $DEFAULT_PKI_SERVER = 'https://localhost:8443';
+
+# Number of days between current date and certificate validity end that should
+# trigger renewal:
+our $DEFAULT_DAYS_TO_RENEW = 30;
+
+# The path to send the POST request to on the CA server:
+our $HTTP_CA_PATH = '/ca/eeca/ca/profileSubmitSSLClient';
+
+# The string we send via POST to the CA server:
+our $HTTP_POST_STRING = 'profileId=caSSLClientSelfRenewal' .
+    '&renewal=true&xmlOutput=true';
+
+
+##
+# Prints default help message
+sub HELP_MESSAGE {
+    print "renew-certificates - A simple Dogtag PKI certificate autorenewer\n";
+    print "\nOptions:\n\n";
+    print "-uURI        PKI server URI (DEFAULT: $DEFAULT_PKI_SERVER)\n";
+    print "-iFILE       File containing certificates and key locations;\n" .
+        "reads from STDIN if FILE is `-' (DEFAULT: STDIN)\n";
+    print "-dDAYS       Minimum number of days that triggers renewal " .
+        "(DEFAULT: $DEFAULT_DAYS_TO_RENEW)\n";
+    print "-h           This help message\n\n";
+    print "Input file format:\n\n";
+    print "The input file contains one entry per line, consisting of " .
+        "two columns\n";
+    print "The first column indicates the path to the certificate,\n" .
+        "the second column the path to the private key corresponding to the " .
+        "certificate.\nBoth files must be readable and PEM-encoded. " .
+        "The columns are separated by a\nspace character (\\s+). " .
+        "A backslash (\\) escapes the following space.\n";
+    print "Columns starting with a hash sign (#) are treated as comments.\n";
+}
+
+
+# Parse command-line options:
+
+my %opts;
+getopts('hu:i:d:', \%opts);
+
+$opts{u} ||= $DEFAULT_PKI_SERVER;
+$opts{d} ||= $DEFAULT_DAYS_TO_RENEW;
+
+HELP_MESSAGE and exit(0) if $opts{h};

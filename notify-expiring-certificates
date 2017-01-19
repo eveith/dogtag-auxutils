@@ -1,5 +1,5 @@
 #!/usr/bin/env perl
-# notifiy-expiring-certs.pl --- A simple e-mail notifier for expiring certificates.
+# notifiy-expiring-certs --- A simple e-mail notifier for expiring certificates.
 # Copyright (C) 2016  Eric MSP Veith <eveith@veith-m.de>
 #
 # Licensed under the Apache License, Version 2.0 (the "License");
@@ -23,6 +23,7 @@ use XML::Twig;
 use HTTP::Tiny;
 use Email::Send;
 use Getopt::Std;
+use IO::Socket::SSL;
 use DateTime::Format::Mail;
 use Net::Domain qw(hostname hostfqdn hostdomain domainname);
 
@@ -53,7 +54,7 @@ sub HELP_MESSAGE {
     print "notifiy-expiring-certs - " .
         "A simple e-mail notifier for expiring certificates.\n";
     print "\nOptions:\n\n";
-    print "-uHOST       PKI server URI (DEFAULT: $DEFAULT_PKI_SERVER)\n";
+    print "-uURI        PKI server URI (DEFAULT: $DEFAULT_PKI_SERVER)\n";
     print "-mSERVER     Mail server (DEFAULT: $DEFAULT_SMTP_SERVER)\n";
     print "-fFROM       Mail from address (DEFAULT: $DEFAULT_FROM_ADDRESS)\n";
     print "-tTO         Fall-back recepient (DEFAULT: $DEFAULT_TO_ADDRESS)\n";
@@ -111,7 +112,10 @@ my %certs;
 
 for (my $start = 0; $start >= 0; ) {
     my $pki_rest_response = HTTP::Tiny->new->get(
-        $opts{'u'} . "/ca/rest/certs?start=$start&size=50&maxResults=-1");
+        "$opts{u}/ca/rest/certs?start=$start&size=50&maxResults=-1",
+        {
+            SSL_options => { SSL_verify_mode => SSL_VERIFY_PEER }
+        });
 
     if (!$pki_rest_response->{success}) {
         print STDERR "Could not contact PKI server at $opts{u} \n";
