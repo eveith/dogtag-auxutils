@@ -16,10 +16,13 @@
 use strict;
 use warnings;
 
+use IO::File;
 use DateTime;
 use XML::Twig;
 use HTTP::Tiny;
+use Net::SSLeay;
 use Getopt::Std;
+use Text::ParseWords;
 
 
 # The default PKI server URI:
@@ -60,12 +63,102 @@ sub HELP_MESSAGE {
 }
 
 
+sub read_config_file {
+    my $path = shift;
+    my $fh = ($path eq '-' ? \*STDIN : IO::File->new($path, 'r'));
+
+    unless ($fh) {
+        print STDERR "Could not open certificate locations file: $!\n";
+        exit(1);
+    }
+
+    my $line = '';
+    my $certificates = [];
+    while (<$fh>) {
+        next if (/^\s*#/);
+
+        chomp;
+        $line .= $_;
+
+        if ($line =~ /\\\Z/) {
+            $line = substr($line, 0, -1);
+            next;
+        }
+
+        my ($cert, $key) = quotewords('\s+', 0, $line);
+
+        unless ($cert && $key) {
+            print STDERR "Skipping malformatted line: $line\n";
+            $line = '';
+            next;
+        }
+
+        if (! -r $cert) {
+            print STDERR "Certificate file $cert not readable, skipping.\n";
+            next;
+        }
+        if (! -r $key) {
+            print STDERR "Key file $cert not readable, skipping.\n";
+            next;
+        }
+
+        push(@$certificates, { cert => $cert, key => $key });
+        $line = '';
+    }
+
+    return $certificates
+}
+
+
+sub renew_certificate {
+    my ($key, $cert) = @_;
+}
+
+
 # Parse command-line options:
 
 my %opts;
 getopts('hu:i:d:', \%opts);
 
+$opts{i} ||= '-';
 $opts{u} ||= $DEFAULT_PKI_SERVER;
 $opts{d} ||= $DEFAULT_DAYS_TO_RENEW;
 
 HELP_MESSAGE and exit(0) if $opts{h};
+
+
+# Load certificate/key paths
+
+my $certificates = read_config_file $opts{i};
+exit(0) unless (scalar @$certificates > 0);
+
+
+# Init OpenSSL:
+
+Net::SSLeay::load_error_strings();
+Net::SSLeay::SSLeay_add_ssl_algorithms();
+Net::SSLeay::randomize();
+
+foreach (@$certificates) {
+    my $bio = undef;
+    my $key_file = $_->{key};
+    my $cert_file = $_->{cert};
+
+    $bio = Net::SSLeay::BIO_new_file($key_file, 'r');
+    my $key = Net::SSLeay::PEM_read_bio_PrivateKey($bio)
+        or print STDERR "Could not read private key $key_file: $!\n"
+        and goto ssl_bio_free;
+    Net::SSLeay::BIO_free($bio);
+
+    $bio = Net::SSLeay::BIO_new_file($cert_file, 'r');
+    my $cert = Net::SSLeay::PEM_read_bio_X509($bio)
+        or print STDERR "Could not read certificate $cert_file: $!\n"
+        and goto ssl_bio_free;
+
+    if (0) {
+        renew_certificate($key, $cert);
+    }
+
+ssl_bio_free:
+    Net::SSLeay::BIO_free($bio);
+}
