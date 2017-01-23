@@ -16,10 +16,15 @@
 use strict;
 use warnings;
 
+use IO::File;
 use DateTime;
 use XML::Twig;
 use HTTP::Tiny;
+use Net::SSLeay;
 use Getopt::Std;
+use IO::Socket::SSL;
+use Text::ParseWords;
+use DateTime::Format::DateParse;
 
 
 # The default PKI server URI:
@@ -60,12 +65,168 @@ sub HELP_MESSAGE {
 }
 
 
+sub read_config_file {
+    my $path = shift;
+    my $fh = ($path eq '-' ? \*STDIN : IO::File->new($path, 'r'));
+
+    unless ($fh) {
+        print STDERR "Could not open certificate locations file: $!\n";
+        exit(1);
+    }
+
+    my $line = '';
+    my $certificates = [];
+    while (<$fh>) {
+        next if (/^\s*#/);
+
+        chomp;
+        $line .= $_;
+
+        if ($line =~ /\\\Z/) {
+            $line = substr($line, 0, -1);
+            next;
+        }
+
+        my ($cert, $key) = quotewords('\s+', 0, $line);
+
+        unless ($cert && $key) {
+            print STDERR "Skipping malformatted line: $line\n";
+            $line = '';
+            next;
+        }
+
+        if (! -r $cert) {
+            print STDERR "Certificate file $cert not readable, skipping.\n";
+            next;
+        }
+        if (! -r $key) {
+            print STDERR "Key file $cert not readable, skipping.\n";
+            next;
+        }
+
+        push(@$certificates, { cert => $cert, key => $key });
+        $line = '';
+    }
+
+    return $certificates
+}
+
+
+sub renew_certificate {
+    my ($key, $cert, $uri) = @_;
+
+    my $http = HTTP::Tiny->new(
+        verify_SSL => 1,
+        SSL_options => {
+            SSL_key => $key,
+            SSL_cert => $cert,
+            SSL_use_cert => 1,
+            SSL_verify_mode => SSL_VERIFY_PEER
+        });
+    my $pki_rest_response = $http->post($uri, {
+            headers => {
+                'content-type' => 'application/x-www-form-urlencoded'
+            },
+            content => $http->www_form_urlencode({
+                profileId => 'caSSLClientSelfRenewal',
+                renewal => 'true',
+                xmlOutput => 'true',
+            })
+        });
+
+    if (!$pki_rest_response->{success}) {
+        print STDERR "Could not contact PKI server at $uri\n";
+        print STDERR "Reason given: $pki_rest_response->{status} ".
+            "$pki_rest_response->{reason}\n";
+        exit(1)
+    }
+
+    my $new_cert_pem = undef;
+    XML::Twig->new(
+        twig_handlers => {
+            'b64' => sub { $new_cert_pem = $_->text; }
+        })->parse($pki_rest_response->{content});
+
+    unless ($new_cert_pem) {
+        print STDERR "Could not read new certificate from REST response. " .
+            "The server responded with $pki_rest_response->{content}\n";
+    }
+
+    return $new_cert_pem;
+}
+
+
 # Parse command-line options:
 
 my %opts;
 getopts('hu:i:d:', \%opts);
 
+$opts{i} ||= '-';
 $opts{u} ||= $DEFAULT_PKI_SERVER;
 $opts{d} ||= $DEFAULT_DAYS_TO_RENEW;
 
 HELP_MESSAGE and exit(0) if $opts{h};
+
+
+# Load certificate/key paths
+
+my $certificates = read_config_file $opts{i};
+exit(0) unless (scalar @$certificates > 0);
+
+
+# Init OpenSSL:
+
+Net::SSLeay::load_error_strings();
+Net::SSLeay::SSLeay_add_ssl_algorithms();
+Net::SSLeay::randomize();
+
+foreach (@$certificates) {
+    my $bio = undef;
+    my $key_file = $_->{key};
+    my $cert_file = $_->{cert};
+
+    $bio = Net::SSLeay::BIO_new_file($key_file, 'r');
+    my $key = Net::SSLeay::PEM_read_bio_PrivateKey($bio)
+        or print STDERR "Could not read private key $key_file: $!\n"
+        and goto ssl_bio_free;
+    Net::SSLeay::BIO_free($bio);
+
+    $bio = Net::SSLeay::BIO_new_file($cert_file, 'r');
+    my $cert = Net::SSLeay::PEM_read_bio_X509($bio)
+        or print STDERR "Could not read certificate $cert_file: $!\n"
+        and goto ssl_key_free;
+
+    my $validity_end = Net::SSLeay::P_ASN1_TIME_get_isotime(
+        Net::SSLeay::X509_get_notAfter($cert));
+    $validity_end = DateTime::Format::DateParse->parse_datetime($validity_end);
+    my $renew_at = DateTime->now->add(days => $opts{d});
+
+
+    if ($renew_at->epoch > $validity_end->epoch) {
+        my $out = IO::File->new($cert_file, 'w')
+            or print STDERR "Could not open certificate file $cert_file " .
+                "for writing: $!, skipping it.\n"
+            and goto ssl_cert_free;
+
+        my $new_cert_pem = renew_certificate(
+            $key,
+            $cert,
+            "$opts{u}$HTTP_CA_PATH");
+        next unless ($new_cert_pem);
+
+        $out->write("-----BEGIN CERTIFICATE-----\n");
+        $out->write("$_\n") foreach ($new_cert_pem =~ /(.{1,65})/g);
+        $out->write("-----END CERTIFICATE-----\n");
+        $out->flush;
+        $out->close;
+    }
+
+ssl_cert_free:
+    Net::SSLeay::X509_free($cert);
+
+ssl_key_free:
+    Net::SSLeay::EVP_PKEY_free($key);
+
+ssl_bio_free:
+    Net::SSLeay::BIO_free($bio);
+}
