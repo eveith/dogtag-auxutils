@@ -22,7 +22,9 @@ use XML::Twig;
 use HTTP::Tiny;
 use Net::SSLeay;
 use Getopt::Std;
+use IO::Socket::SSL;
 use Text::ParseWords;
+use DateTime::Format::DateParse;
 
 
 # The default PKI server URI:
@@ -111,7 +113,30 @@ sub read_config_file {
 
 
 sub renew_certificate {
-    my ($key, $cert) = @_;
+    my ($key, $cert, $uri) = @_;
+
+    my $http = HTTP::Tiny->new(
+        verify_SSL => 1,
+        SSL_options => {
+            SSL_verify_mode => SSL_VERIFY_PEER,
+            SSL_cert => $cert,
+            SSL_key => $key }
+    );
+    my $pki_rest_response = $http->post($uri, {
+        content => $http->www_form_urlencode({
+            profileId => 'caSSLClientSelfRenewal',
+            renewal => 'true',
+            xmlOutput => 'true'
+        }),
+    });
+    use Data::Dumper; print Dumper($pki_rest_response);
+
+    if (!$pki_rest_response->{success}) {
+        print STDERR "Could not contact PKI server at $uri\n";
+        print STDERR "Reason given: $pki_rest_response->{status} ".
+            "$pki_rest_response->{reason}\n";
+        exit(1)
+    }
 }
 
 
@@ -153,11 +178,23 @@ foreach (@$certificates) {
     $bio = Net::SSLeay::BIO_new_file($cert_file, 'r');
     my $cert = Net::SSLeay::PEM_read_bio_X509($bio)
         or print STDERR "Could not read certificate $cert_file: $!\n"
-        and goto ssl_bio_free;
+        and goto ssl_key_free;
 
-    if (0) {
-        renew_certificate($key, $cert);
+    my $validity_end = Net::SSLeay::P_ASN1_TIME_get_isotime(
+        Net::SSLeay::X509_get_notAfter($cert));
+    $validity_end = DateTime::Format::DateParse->parse_datetime($validity_end);
+    my $renew_at = DateTime->now->add(days => $opts{d});
+
+
+    if ($renew_at->epoch > $validity_end->epoch) {
+        renew_certificate($key, $cert, "$opts{u}$HTTP_CA_PATH");
     }
+
+ssl_cert_free:
+    Net::SSLeay::X509_free($cert);
+
+ssl_key_free:
+    Net::SSLeay::EVP_PKEY_free($key);
 
 ssl_bio_free:
     Net::SSLeay::BIO_free($bio);
