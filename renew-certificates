@@ -118,18 +118,21 @@ sub renew_certificate {
     my $http = HTTP::Tiny->new(
         verify_SSL => 1,
         SSL_options => {
-            SSL_verify_mode => SSL_VERIFY_PEER,
+            SSL_key => $key,
             SSL_cert => $cert,
-            SSL_key => $key }
-    );
+            SSL_use_cert => 1,
+            SSL_verify_mode => SSL_VERIFY_PEER
+        });
     my $pki_rest_response = $http->post($uri, {
-        content => $http->www_form_urlencode({
-            profileId => 'caSSLClientSelfRenewal',
-            renewal => 'true',
-            xmlOutput => 'true'
-        }),
-    });
-    use Data::Dumper; print Dumper($pki_rest_response);
+            headers => {
+                'content-type' => 'application/x-www-form-urlencoded'
+            },
+            content => $http->www_form_urlencode({
+                profileId => 'caSSLClientSelfRenewal',
+                renewal => 'true',
+                xmlOutput => 'true',
+            })
+        });
 
     if (!$pki_rest_response->{success}) {
         print STDERR "Could not contact PKI server at $uri\n";
@@ -137,6 +140,19 @@ sub renew_certificate {
             "$pki_rest_response->{reason}\n";
         exit(1)
     }
+
+    my $new_cert_pem = undef;
+    XML::Twig->new(
+        twig_handlers => {
+            'b64' => sub { $new_cert_pem = $_->text; }
+        })->parse($pki_rest_response->{content});
+
+    unless ($new_cert_pem) {
+        print STDERR "Could not read new certificate from REST response. " .
+            "The server responded with $pki_rest_response->{content}\n";
+    }
+
+    return $new_cert_pem;
 }
 
 
@@ -187,7 +203,22 @@ foreach (@$certificates) {
 
 
     if ($renew_at->epoch > $validity_end->epoch) {
-        renew_certificate($key, $cert, "$opts{u}$HTTP_CA_PATH");
+        my $out = IO::File->new($cert_file, 'w')
+            or print STDERR "Could not open certificate file $cert_file " .
+                "for writing: $!, skipping it.\n"
+            and goto ssl_cert_free;
+
+        my $new_cert_pem = renew_certificate(
+            $key,
+            $cert,
+            "$opts{u}$HTTP_CA_PATH");
+        next unless ($new_cert_pem);
+
+        $out->write("-----BEGIN CERTIFICATE-----\n");
+        $out->write("$_\n") foreach ($new_cert_pem =~ /(.{1,65})/g);
+        $out->write("-----END CERTIFICATE-----\n");
+        $out->flush;
+        $out->close;
     }
 
 ssl_cert_free:
