@@ -19,7 +19,7 @@ their certificates are about to expire
 
 .SH DESCRIPTION
 
-.B notify-expering-certificates
+.B notify-expiring-certificates
 notifies holders of X.509 certificates when their certificate is about to
 expire. This Perl script queries a Dogtag PKI instance via its REST interface
 for a list of certificates; for each valid certificate it checks whether the
@@ -67,7 +67,7 @@ default.
 
 .TP
 .BR \-d \fIDAYS\fR
-The number of days to warn in advance. Default is \fI90\fR days. The script
+The number of days to warn in advance. Default is \fI60\fR days. The script
 will warn on every invocation; it does not save who got already notified. The
 warning mails will only end when the certificate has been renewed.
 
@@ -98,6 +98,15 @@ notify-expiring-certificates \\
 .RE
 .fi
 .PP
+
+.SH BUGS
+
+None known, but that doesn't mean anything. Please report bugs at
+<https://github.com/eveith/dogtag-auxutils>
+
+.SH COPYRIGHT
+
+Copyright © 2016-2017 Eric MSP Veith <eveith@veith-m.de>
 
 .SH SEE ALSO
 

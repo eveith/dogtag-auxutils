@@ -1,0 +1,106 @@
+.TH RENEW-CERTIFICATES 8
+
+.SH NAME
+
+renew-certificates \- automatically renews certificates which are about to
+expire at a Dogtag PKI instance
+
+.SH SYNOPSIS
+
+.B renew-certificates
+[\fB\-u\fR \fIURI\fR]
+[\fB\-i\fR \fIFILE\fR]
+[\fB\-d\fR \fIDAYS\fR]
+
+.B renew-certificates
+\fB\-h\fR
+
+.SH DESCRIPTION
+
+.B renew-certificates
+is a simple certificate autorenewer. Given a list of certificates and keys it
+checks which certificates are about to expire, and automatically renews them
+using the autorenew profile of a Dogtag PKI instance.
+
+The list of certificate and private key file locations is given via the
+\fI-i\fP parameter. This input file contains one entry per line, consisting of
+two columns: The first column indicates the path to the certificate, the
+second column the path to the private key corresponding to the certificate.
+Both files must be readable and PEM-encoded. The columns are separated by a
+space character (\\s+). A backslash (\\) escapes the following space.  Columns
+starting with a hash sign (#) are treated as comments.
+
+.B renew-certificates
+then contacts the REST API endpoint of the Dogtag PKI instance, given via the
+\fI-u\fP parameter, via POST. The API endpoint used is
+\fI/ca/eeca/ca/profileSubmitSSLClient\fR. With the private key, the
+certificate is then renewed and stored in the place of the original
+certificate.
+
+.B renew-certificates is service-agnostic, i.e., it does not restart any
+service automatically.
+
+.SH OPTIONS
+
+.TP
+.BR \-u \fIURI\fR
+The base URI of the Dogtag PKI server instance. The default is
+\fIhttps://localhost:8443\fR. \fBrenew-certificates\fR will issue a
+POST request to \fIURI/ca/eeca/ca/profileSubmitSSLClient\fR to
+renew a certificate. It authenticates itself using the certificate and private
+key in question. Hence, \fBrenew-certificates\fR cannot be used to renew
+already expired certificates.
+
+.TP
+.BR \-i \fIFILE\fR
+Designates the file that contains the list of certificates and key files.
+This input file contains one entry per line, consisting of
+two columns: The first column indicates the path to the certificate, the
+second column the path to the private key corresponding to the certificate.
+Both files must be readable and PEM-encoded. The columns are separated by a
+space character (\\s+). A backslash (\\) escapes the following space.  Columns
+starting with a hash sign (#) are treated as comments.
+The default is to read from STDIN; the special file name \fI-\fR also causes
+\fBrenew-certificates\fR to read the list of certificate and key files from
+STDIN.
+
+.TP
+.BR \-d \fIDAYS\fR
+The number of days to warn in advance. Default is \fI60\fR days.
+
+.TP
+.BR \-h
+Prints a short help message.
+
+.SH EXAMPLE
+
+The following command invocation renews the certificate at \fI/my/cert.pem\fR,
+authenticating itself using \fI/my/key.pem\fR, if it is about to expire. The
+Dogtag PKI instance is contacted via POST under
+\fIhttps://pki.example.com/ca/eeca/ca/profileSubmitSSLClient\fR. This list of
+certificates/key files is read from STDIN.
+
+.PP
+.nf
+.RS
+echo "/my/cert.pem /my/key.pem" | renew-certificates \\
+.RS
+-u https://pki.example.com \\
+-d 90 \\
+.RE
+.RE
+.fi
+.PP
+
+.SH BUGS
+
+None known, but that doesn't mean anything. Please report bugs at
+<https://github.com/eveith/dogtag-auxutils>
+
+.SH COPYRIGHT
+
+Copyright © 2016-2017 Eric MSP Veith <eveith@veith-m.de>
+
+.SH SEE ALSO
+
+.BR notify-expiring-certificates (1)
