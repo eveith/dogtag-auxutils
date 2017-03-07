@@ -1,0 +1,125 @@
+.TH NOTIFY-EXPIRING-CERTIFICATES 1
+
+.SH NAME
+
+notify-expiring-certificates \- notify holders of X.509 certificates when
+their certificates are about to expire
+
+.SH SYNOPSIS
+
+.B notify-expiring-certificates
+[\fB\-u\fR \fIURI\fR]
+[\fB\-m\fR \fISERVER\fR]
+[\fB\-f\fR \fIFROM\fR]
+[\fB\-t\fR \fITO\fR]
+[\fB\-d\fR \fIDAYS\fR]
+
+.B notify-expiring-certificates
+\fB\-h\fR
+
+.SH DESCRIPTION
+
+.B notify-expiring-certificates
+notifies holders of X.509 certificates when their certificate is about to
+expire. This Perl script queries a Dogtag PKI instance via its REST interface
+for a list of certificates; for each valid certificate it checks whether the
+it will expire in a given number of days, and if so, it generates an e-mail to
+the certificate holder.
+
+.B notify-expiring-certificates
+issues a GET request to the PKI server's REST endpoint at
+\fI/ca/rest/certs?start=$start&size=50&maxResults=-1\fR and reads the XML
+returned. For all certificates that are valid, it checks its expiration date:
+If the certificate will expire in a number of days less than or equal to the
+Iwarning time, given by \fB-d\fR, the user will be notified by e-mail.
+The user's e-mail address is taken from the \fIE=\fR tag of the certificate's
+subject DN. If this tag does not exist, the fallback e-mail address given by
+the \fB-t\fR parameter will be used.
+
+.B notify-expiring-certificates
+does not authenticate against the PKI server.
+
+.SH OPTIONS
+
+.TP
+.BR \-u \fIURI\fR
+The base URI of the Dogtag PKI server instance. The default is
+\fIhttps://localhost:8443\fR. \fBnotify-expiring-certificates\fR will issue a
+GET request to \fIURI/ca/rest/certs?start=$start&size=50&maxResults=-1\fR to
+retrieve the complete list of certificates. It does not authenticate, but
+takes care of paging.
+
+.TP
+.BR \-m \fISERVER\fR
+The SMTP mail server used for sending the warning e-mails. The server must
+accept unencrypted connections on port 25/tcp (SMTP). This flag is required.
+
+.TP
+.BR \-f \fIFROM\fR
+The e-mail address the warning mails appear to come from. This flag must be
+given, there is no default.
+
+.TP
+.BR \-t \fITO\fR
+A catch-all e-mail address where warnings about certificates without e-mail
+tag in their subject DN are sent to. This flag must be given, there is no 
+default.
+
+.TP
+.BR \-d \fIDAYS\fR
+The number of days to warn in advance. Default is \fI60\fR days. The script
+will warn on every invocation; it does not save who got already notified. The
+warning mails will only end when the certificate has been renewed.
+
+.TP
+.BR \-h
+Prints a short help message.
+
+.SH EXAMPLE
+
+The following command invocation queries the Dogtag PKI instance at
+\fIhttps://pki.example.com:443\fR and warns all holders whose certificates
+will expire in 90 days or less. The warning e-mail will come from
+\fIcertmaster@example.com\fR, which is also the catch-all mail address when
+the certificate has no e-mail associated with it in its subject DN. The mail
+server used in this case is \fImx.example.com\fR.
+
+.PP
+.nf
+.RS
+notify-expiring-certificates \\
+.RS
+-u https://pki.example.com \\
+-f certmaster@example.com \\
+-t certmaster@example.com \\
+-d 90 \\
+-m mx.example.com
+.RE
+.RE
+.fi
+.PP
+
+.SH BUGS
+
+None known, but that doesn't mean anything. Please report bugs at
+<https://github.com/eveith/dogtag-auxutils>
+
+.SH COPYRIGHT
+
+Copyright © 2016-2017 Eric MSP Veith <eveith@veith-m.de>
+
+Licensed under the Apache License, Version 2.0 (the "License"); you may not
+use this file except in compliance with the License. You may obtain a copy of
+the License at
+
+<http://www.apache.org/licenses/LICENSE-2.0>
+
+Unless required by applicable law or agreed to in writing, software
+distributed under the License is distributed on an "AS IS" BASIS, WITHOUT
+WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied. See the
+License for the specific language governing permissions and limitations under
+the License.
+
+.SH SEE ALSO
+
+.BR renew-certificates (8)
