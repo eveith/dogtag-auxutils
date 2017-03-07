@@ -13,6 +13,8 @@
 # WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
 # See the License for the specific language governing permissions and
 # limitations under the License.
+
+
 use strict;
 use warnings;
 
@@ -23,7 +25,6 @@ use HTTP::Tiny;
 use Net::SSLeay;
 use Getopt::Std;
 use IO::Socket::SSL;
-use Text::ParseWords;
 use DateTime::Format::DateParse;
 
 
@@ -87,7 +88,7 @@ sub read_config_file {
             next;
         }
 
-        my ($cert, $key) = quotewords('\s+', 0, $line);
+        my ($cert, $key) = map { s/\\//g; $_ } split /(?<!\\)\s+/;
 
         unless ($cert && $key) {
             print STDERR "Skipping malformatted line: $line\n";
